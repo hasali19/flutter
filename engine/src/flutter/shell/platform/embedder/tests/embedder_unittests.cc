@@ -4,6 +4,8 @@
 
 #define FML_USED_ON_EMBEDDER
 
+#include <memory>
+#include <mutex>
 #include <string>
 #include <utility>
 #include <vector>
@@ -910,6 +912,136 @@ TEST_F(EmbedderTest, CanRenderImplicitView) {
             kSuccess);
   ASSERT_TRUE(engine.is_valid());
   latch.Wait();
+}
+
+namespace {
+// Launches the engine and renders the implicit view at each of the given
+// sizes in turn, waiting until a frame with a backing store of each size has
+// been presented.
+//
+// One more frame is rendered at the final size, so that by the time this
+// returns, the engine is done creating, resizing and collecting backing stores
+// for the earlier frames. The engine is returned so that it is not shut down
+// (collecting the remaining backing stores) before the caller is done.
+UniqueEngine RenderImplicitViewAtSizes(EmbedderConfigBuilder& builder,
+                                       EmbedderTestContextSoftware& context,
+                                       const std::vector<FlutterSize>& sizes) {
+  // Shared with the present callback, which may outlive this function.
+  struct State {
+    std::mutex mutex;
+    FlutterSize expected_size = {};
+    fml::AutoResetWaitableEvent latch;
+  };
+  auto state = std::make_shared<State>();
+
+  context.GetCompositor().SetPresentCallback(
+      [state](FlutterViewId view_id, const FlutterLayer** layers,
+              size_t layers_count) {
+        EXPECT_EQ(view_id, kFlutterImplicitViewId);
+        ASSERT_EQ(layers_count, 1u);
+        EXPECT_EQ(layers[0]->type, kFlutterLayerContentTypeBackingStore);
+        std::scoped_lock lock(state->mutex);
+        if (layers[0]->size.width == state->expected_size.width &&
+            layers[0]->size.height == state->expected_size.height) {
+          state->latch.Signal();
+        }
+      },
+      /*one_shot=*/false);
+
+  auto engine = builder.LaunchEngine();
+  EXPECT_TRUE(engine.is_valid());
+
+  for (const FlutterSize& size : sizes) {
+    {
+      std::scoped_lock lock(state->mutex);
+      state->expected_size = size;
+    }
+    FlutterWindowMetricsEvent event = {};
+    event.struct_size = sizeof(event);
+    event.width = size.width;
+    event.height = size.height;
+    event.pixel_ratio = 1.0;
+    EXPECT_EQ(FlutterEngineSendWindowMetricsEvent(engine.get(), &event),
+              kSuccess);
+    state->latch.Wait();
+  }
+
+  EXPECT_EQ(FlutterEngineScheduleFrame(engine.get()), kSuccess);
+  state->latch.Wait();
+
+  return engine;
+}
+}  // namespace
+
+TEST_F(EmbedderTest, ResizesBackingStoreWhenViewIsResized) {
+  auto& context = GetEmbedderContext<EmbedderTestContextSoftware>();
+
+  EmbedderConfigBuilder builder(context);
+  builder.SetSurface(DlISize(800, 600));
+  builder.SetCompositor();
+  builder.SetDartEntrypoint("render_implicit_view");
+  builder.SetRenderTargetType(
+      EmbedderTestBackingStoreProducer::RenderTargetType::kSoftwareBuffer);
+  builder.GetCompositor().resize_backing_store_callback =
+      [](const FlutterBackingStoreConfig* config,
+         FlutterBackingStore* backing_store, void* user_data) {
+        return reinterpret_cast<EmbedderTestCompositor*>(user_data)
+            ->ResizeBackingStore(config, backing_store);
+      };
+
+  auto engine = RenderImplicitViewAtSizes(builder, context,
+                                          {{300.0, 200.0}, {400.0, 300.0}});
+
+  // The backing store from the first frame was resized rather than collected
+  // and replaced.
+  auto& compositor = context.GetCompositor();
+  EXPECT_EQ(compositor.GetBackingStoresCreatedCount(), 1u);
+  EXPECT_EQ(compositor.GetBackingStoresResizedCount(), 1u);
+  EXPECT_EQ(compositor.GetBackingStoresCollectedCount(), 0u);
+}
+
+TEST_F(EmbedderTest, CreatesNewBackingStoreWhenResizeFails) {
+  auto& context = GetEmbedderContext<EmbedderTestContextSoftware>();
+
+  EmbedderConfigBuilder builder(context);
+  builder.SetSurface(DlISize(800, 600));
+  builder.SetCompositor();
+  builder.SetDartEntrypoint("render_implicit_view");
+  builder.SetRenderTargetType(
+      EmbedderTestBackingStoreProducer::RenderTargetType::kSoftwareBuffer);
+  builder.GetCompositor().resize_backing_store_callback =
+      [](const FlutterBackingStoreConfig* /*config*/,
+         FlutterBackingStore* /*backing_store*/,
+         void* /*user_data*/) { return false; };
+
+  auto engine = RenderImplicitViewAtSizes(builder, context,
+                                          {{300.0, 200.0}, {400.0, 300.0}});
+
+  // The backing store that could not be resized was collected and a new one
+  // was created.
+  auto& compositor = context.GetCompositor();
+  EXPECT_EQ(compositor.GetBackingStoresCreatedCount(), 2u);
+  EXPECT_EQ(compositor.GetBackingStoresResizedCount(), 0u);
+  EXPECT_EQ(compositor.GetBackingStoresCollectedCount(), 1u);
+}
+
+TEST_F(EmbedderTest, RecreatesBackingStoreWhenResizeCallbackIsAbsent) {
+  auto& context = GetEmbedderContext<EmbedderTestContextSoftware>();
+
+  EmbedderConfigBuilder builder(context);
+  builder.SetSurface(DlISize(800, 600));
+  builder.SetCompositor();
+  builder.SetDartEntrypoint("render_implicit_view");
+  builder.SetRenderTargetType(
+      EmbedderTestBackingStoreProducer::RenderTargetType::kSoftwareBuffer);
+
+  auto engine = RenderImplicitViewAtSizes(builder, context,
+                                          {{300.0, 200.0}, {400.0, 300.0}});
+
+  auto& compositor = context.GetCompositor();
+  EXPECT_EQ(compositor.GetBackingStoresCreatedCount(), 2u);
+  EXPECT_EQ(compositor.GetBackingStoresResizedCount(), 0u);
+  EXPECT_EQ(compositor.GetBackingStoresCollectedCount(), 1u);
 }
 
 TEST_F(EmbedderTest, CanRenderImplicitViewUsingPresentLayersCallback) {

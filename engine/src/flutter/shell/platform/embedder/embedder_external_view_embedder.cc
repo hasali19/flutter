@@ -23,10 +23,12 @@ static const auto kRootViewIdentifier = EmbedderExternalView::ViewIdentifier{};
 EmbedderExternalViewEmbedder::EmbedderExternalViewEmbedder(
     bool avoid_backing_store_cache,
     const CreateRenderTargetCallback& create_render_target_callback,
-    const PresentCallback& present_callback)
+    const PresentCallback& present_callback,
+    const ResizeRenderTargetCallback& resize_render_target_callback)
     : avoid_backing_store_cache_(avoid_backing_store_cache),
       create_render_target_callback_(create_render_target_callback),
-      present_callback_(present_callback) {
+      present_callback_(present_callback),
+      resize_render_target_callback_(resize_render_target_callback) {
   FML_DCHECK(create_render_target_callback_);
   FML_DCHECK(present_callback_);
 }
@@ -568,6 +570,21 @@ void EmbedderExternalViewEmbedder::SubmitFlutterView(
       }
     }
     auto config = MakeBackingStoreConfig(flutter_view_id, frame_size);
+    if (!avoid_backing_store_cache_ && resize_render_target_callback_) {
+      // No cached render target matches the new size. Any render target still
+      // in the cache would otherwise be collected at the end of this frame, so
+      // try to resize one of them instead of creating a new one.
+      std::unique_ptr<EmbedderRenderTarget> unused_target =
+          render_target_cache.TakeAnyRenderTarget();
+      if (unused_target != nullptr) {
+        std::unique_ptr<EmbedderRenderTarget> target =
+            resize_render_target_callback_(context, aiks_context,
+                                           std::move(unused_target), config);
+        if (target != nullptr) {
+          return target;
+        }
+      }
+    }
     return create_render_target_callback_(context, aiks_context, config);
   });
 

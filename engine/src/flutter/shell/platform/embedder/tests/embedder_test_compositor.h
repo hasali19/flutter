@@ -39,6 +39,9 @@ class EmbedderTestCompositor {
 
   bool CollectBackingStore(const FlutterBackingStore* backing_store);
 
+  bool ResizeBackingStore(const FlutterBackingStoreConfig* config,
+                          FlutterBackingStore* backing_store);
+
   bool Present(FlutterViewId view_id,
                const FlutterLayer** layers,
                size_t layers_count);
@@ -71,6 +74,8 @@ class EmbedderTestCompositor {
 
   size_t GetBackingStoresCollectedCount() const;
 
+  size_t GetBackingStoresResizedCount() const;
+
   void AddOnCreateRenderTargetCallback(const fml::closure& callback);
 
   void AddOnCollectRenderTargetCallback(const fml::closure& callback);
@@ -95,6 +100,7 @@ class EmbedderTestCompositor {
   sk_sp<SkImage> last_composition_;
   size_t backing_stores_created_ = 0;
   size_t backing_stores_collected_ = 0;
+  size_t backing_stores_resized_ = 0;
   std::vector<fml::closure> on_create_render_target_callbacks_;
   std::vector<fml::closure> on_collect_render_target_callbacks_;
   std::vector<fml::closure> on_present_callbacks_;

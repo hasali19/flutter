@@ -22,6 +22,17 @@ EmbedderRenderTargetCache::GetRenderTarget(
   return target;
 }
 
+std::unique_ptr<EmbedderRenderTarget>
+EmbedderRenderTargetCache::TakeAnyRenderTarget() {
+  auto it = cached_render_targets_.begin();
+  if (it == cached_render_targets_.end()) {
+    return nullptr;
+  }
+  auto target = std::move(it->second);
+  cached_render_targets_.erase(it);
+  return target;
+}
+
 std::set<std::unique_ptr<EmbedderRenderTarget>>
 EmbedderRenderTargetCache::ClearAllRenderTargetsInCache() {
   std::set<std::unique_ptr<EmbedderRenderTarget>> cleared_targets;

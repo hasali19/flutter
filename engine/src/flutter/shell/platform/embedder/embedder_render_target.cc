@@ -27,4 +27,8 @@ const FlutterBackingStore* EmbedderRenderTarget::GetBackingStore() const {
   return &backing_store_;
 }
 
+fml::closure EmbedderRenderTarget::TakeReleaseCallback() {
+  return std::exchange(on_release_, nullptr);
+}
+
 }  // namespace flutter

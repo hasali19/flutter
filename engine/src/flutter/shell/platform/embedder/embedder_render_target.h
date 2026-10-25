@@ -92,6 +92,17 @@ class EmbedderRenderTarget {
   const FlutterBackingStore* GetBackingStore() const;
 
   //----------------------------------------------------------------------------
+  /// @brief      Takes the callback that is invoked when this render target is
+  ///             destroyed. After this call, destroying the render target no
+  ///             longer releases the embedder backing store. This is used when
+  ///             the backing store is handed back to the embedder to be
+  ///             resized.
+  ///
+  /// @return     The release callback, which may be null.
+  ///
+  fml::closure TakeReleaseCallback();
+
+  //----------------------------------------------------------------------------
   /// @brief      Make the render target current.
   ///
   ///             Sometimes render targets are actually (for example)

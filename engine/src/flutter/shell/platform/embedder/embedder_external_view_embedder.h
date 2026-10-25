@@ -34,6 +34,12 @@ class EmbedderExternalViewEmbedder final : public ExternalViewEmbedder {
           GrDirectContext* context,
           const std::shared_ptr<impeller::AiksContext>& aiks_context,
           const FlutterBackingStoreConfig& config)>;
+  using ResizeRenderTargetCallback =
+      std::function<std::unique_ptr<EmbedderRenderTarget>(
+          GrDirectContext* context,
+          const std::shared_ptr<impeller::AiksContext>& aiks_context,
+          std::unique_ptr<EmbedderRenderTarget> render_target,
+          const FlutterBackingStoreConfig& config)>;
   using PresentCallback =
       std::function<bool(FlutterViewId view_id,
                          const std::vector<const FlutterLayer*>& layers)>;
@@ -55,11 +61,20 @@ class EmbedderExternalViewEmbedder final : public ExternalViewEmbedder {
   ///                                     collection of layers (backed by
   ///                                     fulfilled render targets) to the
   ///                                     embedder for presentation.
+  /// @param[in]  resize_render_target_callback
+  ///                                     An optional callback used to resize
+  ///                                     an unused render target to a new
+  ///                                     size. It takes ownership of the
+  ///                                     render target and returns the resized
+  ///                                     render target, or null on failure, in
+  ///                                     which case a new render target is
+  ///                                     created instead.
   ///
   EmbedderExternalViewEmbedder(
       bool avoid_backing_store_cache,
       const CreateRenderTargetCallback& create_render_target_callback,
-      const PresentCallback& present_callback);
+      const PresentCallback& present_callback,
+      const ResizeRenderTargetCallback& resize_render_target_callback = {});
 
   //----------------------------------------------------------------------------
   /// @brief      Collects the external view embedder.
@@ -115,6 +130,7 @@ class EmbedderExternalViewEmbedder final : public ExternalViewEmbedder {
   const bool avoid_backing_store_cache_;
   const CreateRenderTargetCallback create_render_target_callback_;
   const PresentCallback present_callback_;
+  const ResizeRenderTargetCallback resize_render_target_callback_;
   SurfaceTransformationCallback surface_transformation_callback_;
   DlISize pending_frame_size_;
   double pending_device_pixel_ratio_ = 1.0;

@@ -51,6 +51,20 @@ bool EmbedderTestCompositor::CollectBackingStore(
   return true;
 }
 
+bool EmbedderTestCompositor::ResizeBackingStore(
+    const FlutterBackingStoreConfig* config,
+    FlutterBackingStore* backing_store) {
+  // The engine has already released its references to the old resources, which
+  // invoked their destruction callbacks. The test producers have no resources
+  // that can be resized in place, so allocate new ones of the requested size
+  // and update the backing store to refer to them.
+  bool success = backingstore_producer_->Create(config, backing_store);
+  if (success) {
+    backing_stores_resized_++;
+  }
+  return success;
+}
+
 sk_sp<SkSurface> EmbedderTestCompositor::GetSurface(
     const FlutterBackingStore* backing_store) const {
   return backingstore_producer_->GetSurface(backing_store);
@@ -118,6 +132,10 @@ size_t EmbedderTestCompositor::GetBackingStoresCreatedCount() const {
 
 size_t EmbedderTestCompositor::GetBackingStoresCollectedCount() const {
   return backing_stores_collected_;
+}
+
+size_t EmbedderTestCompositor::GetBackingStoresResizedCount() const {
+  return backing_stores_resized_;
 }
 
 void EmbedderTestCompositor::AddOnCreateRenderTargetCallback(

@@ -2291,6 +2291,19 @@ typedef bool (*FlutterBackingStoreCollectCallback)(
     const FlutterBackingStore* renderer,
     void* user_data);
 
+/// The callback invoked by the engine to resize an existing backing store.
+///
+/// The `config` describes the new size. The `backing_store` was previously
+/// returned by the embedder from `create_backing_store_callback` (or by an
+/// earlier call to this callback). The embedder should resize the resources
+/// associated with the backing store in place and may update any field of the
+/// backing store (for example the texture or framebuffer name, or the
+/// destruction callback) except `struct_size`.
+typedef bool (*FlutterBackingStoreResizeCallback)(
+    const FlutterBackingStoreConfig* config,
+    FlutterBackingStore* backing_store,
+    void* user_data);
+
 typedef bool (*FlutterLayersPresentCallback)(const FlutterLayer** layers,
                                              size_t layers_count,
                                              void* user_data);
@@ -2307,8 +2320,9 @@ typedef struct {
   /// A baton that in not interpreted by the engine in any way. If it passed
   /// back to the embedder in `FlutterCompositor.create_backing_store_callback`,
   /// `FlutterCompositor.collect_backing_store_callback`,
-  /// `FlutterCompositor.present_layers_callback`, and
-  /// `FlutterCompositor.present_view_callback`.
+  /// `FlutterCompositor.present_layers_callback`,
+  /// `FlutterCompositor.present_view_callback`, and
+  /// `FlutterCompositor.resize_backing_store_callback`.
   void* user_data;
   /// A callback invoked by the engine to obtain a backing store for a specific
   /// `FlutterLayer`.
@@ -2357,6 +2371,26 @@ typedef struct {
   ///
   /// The callback should return true if the operation was successful.
   FlutterPresentViewCallback present_view_callback;
+  /// An optional callback invoked by the engine to resize an existing backing
+  /// store, for example when a view changes size.
+  ///
+  /// If this callback is not provided, the engine collects backing stores that
+  /// no longer match the size of the view (using
+  /// `collect_backing_store_callback`) and creates new ones (using
+  /// `create_backing_store_callback`).
+  ///
+  /// If provided, the engine will instead try to resize a backing store it no
+  /// longer needs at its old size. Before invoking this callback, the engine
+  /// releases its own references to the backing store's resources (invoking
+  /// any destruction callbacks in the backing store). If the callback returns
+  /// false, the engine collects the backing store using
+  /// `collect_backing_store_callback` and creates a new one using
+  /// `create_backing_store_callback`.
+  ///
+  /// This callback is not used if `avoid_backing_store_cache` is true.
+  ///
+  /// The callback should return true if the operation was successful.
+  FlutterBackingStoreResizeCallback resize_backing_store_callback;
 } FlutterCompositor;
 
 typedef struct {

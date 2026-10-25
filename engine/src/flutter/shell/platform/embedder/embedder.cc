@@ -1386,28 +1386,20 @@ MakeRenderTargetFromSkSurface(FlutterBackingStore backing_store,
                                        std::move(on_release), nullptr, nullptr);
 }
 
+/// Wraps a backing store provided by the embedder (either newly created or
+/// resized) in a render target. Ownership of the backing store is transferred
+/// to the render target, which collects it when destroyed.
 static std::unique_ptr<flutter::EmbedderRenderTarget>
-CreateEmbedderRenderTarget(
+MakeRenderTargetFromBackingStore(
     const FlutterCompositor* compositor,
     const FlutterBackingStoreConfig& config,
+    const FlutterBackingStore& backing_store,
     GrDirectContext* context,
     const std::shared_ptr<impeller::AiksContext>& aiks_context,
     bool enable_impeller) {
-  FlutterBackingStore backing_store = {};
-  backing_store.struct_size = sizeof(backing_store);
-
   // Safe access checks on the compositor struct have been performed in
   // InferExternalViewEmbedderFromArgs and are not necessary here.
-  auto c_create_callback = compositor->create_backing_store_callback;
   auto c_collect_callback = compositor->collect_backing_store_callback;
-
-  {
-    TRACE_EVENT0("flutter", "FlutterCompositorCreateBackingStore");
-    if (!c_create_callback(&config, &backing_store, compositor->user_data)) {
-      FML_LOG(ERROR) << "Could not create the embedder backing store.";
-      return nullptr;
-    }
-  }
 
   if (backing_store.struct_size != sizeof(backing_store)) {
     FML_LOG(ERROR) << "Embedder modified the backing store struct size.";
@@ -1542,6 +1534,77 @@ CreateEmbedderRenderTarget(
   return render_target;
 }
 
+static std::unique_ptr<flutter::EmbedderRenderTarget>
+CreateEmbedderRenderTarget(
+    const FlutterCompositor* compositor,
+    const FlutterBackingStoreConfig& config,
+    GrDirectContext* context,
+    const std::shared_ptr<impeller::AiksContext>& aiks_context,
+    bool enable_impeller) {
+  FlutterBackingStore backing_store = {};
+  backing_store.struct_size = sizeof(backing_store);
+
+  // Safe access checks on the compositor struct have been performed in
+  // InferExternalViewEmbedderFromArgs and are not necessary here.
+  auto c_create_callback = compositor->create_backing_store_callback;
+
+  {
+    TRACE_EVENT0("flutter", "FlutterCompositorCreateBackingStore");
+    if (!c_create_callback(&config, &backing_store, compositor->user_data)) {
+      FML_LOG(ERROR) << "Could not create the embedder backing store.";
+      return nullptr;
+    }
+  }
+
+  return MakeRenderTargetFromBackingStore(compositor, config, backing_store,
+                                          context, aiks_context,
+                                          enable_impeller);
+}
+
+/// Hands the backing store of an existing render target back to the embedder
+/// to be resized, then wraps the resized backing store in a new render target.
+///
+/// Returns null if the embedder could not resize the backing store. In that
+/// case the backing store has been collected.
+static std::unique_ptr<flutter::EmbedderRenderTarget>
+ResizeEmbedderRenderTarget(
+    const FlutterCompositor* compositor,
+    FlutterBackingStoreResizeCallback c_resize_callback,
+    std::unique_ptr<flutter::EmbedderRenderTarget> render_target,
+    const FlutterBackingStoreConfig& config,
+    GrDirectContext* context,
+    const std::shared_ptr<impeller::AiksContext>& aiks_context,
+    bool enable_impeller) {
+  FML_DCHECK(render_target);
+  FML_DCHECK(c_resize_callback);
+
+  FlutterBackingStore backing_store = *render_target->GetBackingStore();
+
+  // Release the engine's references to the embedder's resources (such as the
+  // wrapping SkSurface or Impeller render target) without collecting the
+  // backing store itself, so that the embedder is free to resize them.
+  render_target->TakeReleaseCallback();
+  render_target.reset();
+
+  bool resized;
+  {
+    TRACE_EVENT0("flutter", "FlutterCompositorResizeBackingStore");
+    resized = c_resize_callback(&config, &backing_store, compositor->user_data);
+  }
+
+  if (!resized) {
+    FML_LOG(ERROR) << "Could not resize the embedder backing store.";
+    TRACE_EVENT0("flutter", "FlutterCompositorCollectBackingStore");
+    compositor->collect_backing_store_callback(&backing_store,
+                                               compositor->user_data);
+    return nullptr;
+  }
+
+  return MakeRenderTargetFromBackingStore(compositor, config, backing_store,
+                                          context, aiks_context,
+                                          enable_impeller);
+}
+
 /// Creates an EmbedderExternalViewEmbedder.
 ///
 /// When a non-OK status is returned, engine startup should be halted.
@@ -1562,6 +1625,8 @@ InferExternalViewEmbedderFromArgs(const FlutterCompositor* compositor,
       SAFE_ACCESS(compositor, present_view_callback, nullptr);
   bool avoid_backing_store_cache =
       SAFE_ACCESS(compositor, avoid_backing_store_cache, false);
+  auto c_resize_callback =
+      SAFE_ACCESS(compositor, resize_backing_store_callback, nullptr);
 
   // Make sure the required callbacks are present
   if (!c_create_callback || !c_collect_callback) {
@@ -1588,6 +1653,21 @@ InferExternalViewEmbedderFromArgs(const FlutterCompositor* compositor,
                                               context, aiks_context,
                                               enable_impeller);
           };
+
+  flutter::EmbedderExternalViewEmbedder::ResizeRenderTargetCallback
+      resize_render_target_callback;
+  if (c_resize_callback) {
+    resize_render_target_callback =
+        [captured_compositor, c_resize_callback, enable_impeller](
+            GrDirectContext* context,
+            const std::shared_ptr<impeller::AiksContext>& aiks_context,
+            std::unique_ptr<flutter::EmbedderRenderTarget> render_target,
+            const auto& config) {
+          return ResizeEmbedderRenderTarget(
+              &captured_compositor, c_resize_callback, std::move(render_target),
+              config, context, aiks_context, enable_impeller);
+        };
+  }
 
   flutter::EmbedderExternalViewEmbedder::PresentCallback present_callback;
   if (c_present_callback) {
@@ -1618,7 +1698,7 @@ InferExternalViewEmbedderFromArgs(const FlutterCompositor* compositor,
 
   return std::make_unique<flutter::EmbedderExternalViewEmbedder>(
       avoid_backing_store_cache, create_render_target_callback,
-      present_callback);
+      present_callback, resize_render_target_callback);
 }
 
 // Translates embedder metrics to engine metrics, or returns a string on error.

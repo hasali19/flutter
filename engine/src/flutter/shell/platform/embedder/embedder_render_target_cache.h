@@ -32,6 +32,14 @@ class EmbedderRenderTargetCache {
   std::unique_ptr<EmbedderRenderTarget> GetRenderTarget(
       const EmbedderExternalView::RenderTargetDescriptor& descriptor);
 
+  //----------------------------------------------------------------------------
+  /// @brief      Removes and returns any render target in the cache, regardless
+  ///             of its size.
+  ///
+  /// @return     A cached render target, or null if the cache is empty.
+  ///
+  std::unique_ptr<EmbedderRenderTarget> TakeAnyRenderTarget();
+
   std::set<std::unique_ptr<EmbedderRenderTarget>>
   ClearAllRenderTargetsInCache();
 
